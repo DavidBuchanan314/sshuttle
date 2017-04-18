@@ -4,39 +4,6 @@ from argparse import ArgumentParser, Action, ArgumentTypeError as Fatal
 from sshuttle import __version__
 
 
-# 1.2.3.4/5 or just 1.2.3.4
-def parse_subnet4(s):
-    m = re.match(r'(\d+)(?:\.(\d+)\.(\d+)\.(\d+))?(?:/(\d+))?$', s)
-    if not m:
-        raise Fatal('%r is not a valid IP subnet format' % s)
-    (a, b, c, d, width) = m.groups()
-    (a, b, c, d) = (int(a or 0), int(b or 0), int(c or 0), int(d or 0))
-    if width is None:
-        width = 32
-    else:
-        width = int(width)
-    if a > 255 or b > 255 or c > 255 or d > 255:
-        raise Fatal('%d.%d.%d.%d has numbers > 255' % (a, b, c, d))
-    if width > 32:
-        raise Fatal('*/%d is greater than the maximum of 32' % width)
-    return(socket.AF_INET, '%d.%d.%d.%d' % (a, b, c, d), width)
-
-
-# 1:2::3/64 or just 1:2::3
-def parse_subnet6(s):
-    m = re.match(r'(?:([a-fA-F\d:]+))?(?:/(\d+))?$', s)
-    if not m:
-        raise Fatal('%r is not a valid IP subnet format' % s)
-    (net, width) = m.groups()
-    if width is None:
-        width = 128
-    else:
-        width = int(width)
-    if width > 128:
-        raise Fatal('*/%d is greater than the maximum of 128' % width)
-    return(socket.AF_INET6, net, width)
-
-
 # Subnet file, supporting empty lines and hash-started comment lines
 def parse_subnet_file(s):
     try:
@@ -59,11 +26,25 @@ def parse_subnet_file(s):
 
 # 1.2.3.4/5 or just 1.2.3.4
 # 1:2::3/64 or just 1:2::3
+# alteranatively, just example.com
 def parse_subnet(subnet_str):
-    if ':' in subnet_str:
-        return parse_subnet6(subnet_str)
-    else:
-        return parse_subnet4(subnet_str)
+    m = re.match(r'^([^/]+)(/(\d+))?$', subnet_str)
+    if not m:
+        raise Fatal('%r is not a valid IP subnet format' % subnet_str)
+    addr_str = m.group(1)
+    width_str = m.group(3)
+    try:
+        infos = socket.getaddrinfo(addr_str, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror:
+        raise Fatal('Unable to resolve address: %s' % addr_str)
+    # min(infos) is a hack to choose the first IPv4 address, falling back to IPv6 if available
+    family, _, _, _, addr = min(infos)
+    max_width = 32 if family == socket.AF_INET else 128
+    width = int(width_str) if width_str else max_width
+    if width > max_width:
+        raise Fatal('*/%d is greater than the maximum of %d' % (width, max_width))
+
+    return (family, addr[0], width)
 
 
 # 1.2.3.4:567 or just 1.2.3.4 or just 567
